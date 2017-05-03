@@ -505,7 +505,7 @@ GizwitsWS.prototype._getWebsocketConnInfo = function(device) {
   return pre + host + ":" + port;
 };
 
-GizwitsWS.prototype._getMQTTLen(len) {
+GizwitsWS.prototype._getMQTTLen = function(len) {
   var digitNum = 0;
   var tmpDigit = len;
   var lenMQTTArray = undefined;
