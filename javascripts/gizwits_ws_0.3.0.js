@@ -505,6 +505,25 @@ GizwitsWS.prototype._getWebsocketConnInfo = function(device) {
   return pre + host + ":" + port;
 };
 
+GizwitsWS.prototype._getMQTTLen(len) {
+  var digitNum = 0;
+  var tmpDigit = len;
+  var lenMQTTArray = undefined;
+
+  if (len <= 0) return lenMQTTArray;
+
+  do {
+    if (tmpDigit / 0x80) {
+      lenMQTTArray[digitNum++] = tmpDigit % 0x80 | 0x80;
+    } else {
+      lenMQTTArray[digitNum++] = tmpDigit % 80;
+    }
+    tmpDigit /= 0x80;
+  } while (tmpDigit);
+
+  return lenMQTTArray;
+}
+
 String.prototype.format = function() {
   var args = arguments;
   return this.replace(/\{(\d+)\}/g,

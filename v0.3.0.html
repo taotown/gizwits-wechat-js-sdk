@@ -61,14 +61,26 @@
 
         function read()
         {
-            var did = $('#readDid').val();
-            var names = $('#names').val();
-            if (names == "") {
-                gizwitsws.read(did, null);
-            } else {
-                gizwitsws.read(did, JSON.parse(names));
-            };
-            showScreen("已发送read指令!");
+            // var did = $('#readDid').val();
+            // var names = $('#names').val();
+            // if (names == "") {
+            //     gizwitsws.read(did, null);
+            // } else {
+            //     gizwitsws.read(did, JSON.parse(names));
+            // };
+            // showScreen("已发送read指令!");
+            
+            var lenMQTTLenArray = undefined;
+            var len = $('#names').val();
+            if (len != "") {
+                lenMQTTLenArray = gizwitsws._getMQTTLen(len);
+                var str = len + " 转换成MQTT len = [";
+                for (var i = 0; i < lenMQTTLenArray.length; i++) {
+                    str = str + lenMQTTLenArray[i] + ",";
+                }
+                str = str.substr(0, str.length-1) + "]";
+                showScreen(str);
+            }
         }
 
         function writeCommand()
