@@ -100,6 +100,36 @@ GizwitsWS.prototype.send = function(did, data) {
   });
 };
 
+GizwitsWS.prototype.addSubDevice = function(did, macs) {
+  var me = this;
+  if (me._bindingDevices == undefined) {
+    me._sendError("Please call 'init()' firstly.");
+    return;
+  }
+
+  var device = me._bindingDevices[did];
+  if (device == null) {
+    me._sendError("Device is not bound.");
+    return;
+  }
+
+  var wsInfo = me._getWebsocketConnInfo(device);
+  var conn = me._connections[wsInfo];
+  if (conn == null) {
+    me._sendError("Websocket is not connected.");
+    return;
+  }
+
+  var data = [0, 0, 0, 3, 0];
+  conn._sendJson({
+    cmd: "c2s_raw",
+    data: {
+      did: did,
+      raw: data
+    }
+  });
+}
+
 GizwitsWS.prototype.read = function(did, names) {
   var me = this;
   if (me._bindingDevices == undefined) {
