@@ -3,11 +3,388 @@
 <head>
     <meta charset="UTF-8">
     <title>js-sdk-test</title>
+    <script src="javascripts/jquery.min.js"></script>
+    <script src="javascripts/jquery.cookie.min.js"></script>
+    <script src="javascripts/gizwits_ws_0.3.0.js"></script>
+    <script type="text/javascript">
+        var gGizwitsWS;
+        var gSubDevices = {};
+        var gBoundDevices = {};
+        // $(document).ready(setDefault);
+
+        function setDefault()
+        {
+            $('#apiHost').val($.cookie('apiHost'));
+            $('#weChatOpenID').val($.cookie('weChatOpenID'));
+            $('#gizwitsAppID').val($.cookie('gizwitsAppID'));
+        }
+
+        function newObj()
+        {
+            if (gGizwitsWS != null)
+            {
+                alert("对象已被初始化，如需改变参数，请刷新页面.");
+                return;
+            }
+            var apiHost = $('#apiHost').val();
+            var weChatOpenID = $('#weChatOpenID').val();
+            var gizwitsAppID = $('#gizwitsAppID').val();
+            gGizwitsWS = new GizwitsWS(apiHost, weChatOpenID, gizwitsAppID);
+
+            gGizwitsWS.onInit = onInit;
+            gGizwitsWS.onError = onError;
+            gGizwitsWS.onConnected = onConnected;
+            gGizwitsWS.onReceivedRaw = onReceivedRaw;
+            gGizwitsWS.onReceivedAttrs = onReceivedAttrs;
+            gGizwitsWS.onUpdateSubDevices = onUpdateSubDevices;
+            gGizwitsWS.onOnlineStatusChanged = onOnlineStatusChanged;
+
+            $.cookie('apiHost', apiHost);
+            $.cookie('weChatOpenID', weChatOpenID);
+            $.cookie('gizwitsAppID', gizwitsAppID);
+            showScreen("初始化对象成功!");
+        }
+
+        function init()
+        {
+            gGizwitsWS.init();
+            showScreen("已发送init指令!");
+        }
+
+        function connect()
+        {
+            var did = $('#connectDid').val();
+            gGizwitsWS.connect(did);
+            showScreen("已发送connect指令!");
+        }
+
+        function read()
+        {
+            var did = $('#readDid').val();
+            var attrNames = $('#attrNames').val();
+            if (attrNames) {
+            	gGizwitsWS.read(did, JSON.parse(attrNames));
+            } else {
+                gGizwitsWS.read(did, null);
+            };
+            showScreen("已发送read指令!");
+        }
+
+        function writeCommand()
+        {
+        	var rawObj;
+        	var attrsObj;
+        	var raw = $('#raw').val();
+        	var attrs = $('#attrs').val();
+            var did = $('#writeDid').val();
+            try {
+            	if (raw) {
+            		rawObj = JSON.parse(raw);
+            	}
+            	if (attrs) {
+            		attrsObj = JSON.parse(attrs);
+            	}
+                gGizwitsWS.write(did, attrsObj, rawObj);
+                showScreen("已对设备" + did + "发送write指令: attrs=" + attrs + ",raw=" + raw);
+            }
+            catch(e) {
+                showError("数据格式错误：" + e);
+            }
+        }
+
+        function updateSubDevices() {
+        	var did = $('#updateSubdevicesDid').val();
+        	gGizwitsWS.updateSubDevices(did);
+        	showScreen("已对中控设备" + did + "发送更新子设备列表指令!");
+        }
+
+        function addSubDevice() {
+        	var did = $('#addSubDeviceDid').val();
+        	var subDevices = $('#subDevicesForAdding').val();
+        	if (subDevices) {
+        		gGizwitsWS.addSubDevice(did, JSON.parse(subDevices));
+        	}
+        	else {
+        		gGizwitsWS.addSubDevice(did, null);
+        	}
+        	showScreen("已对中控设备" + did + "发送添加子设备指令: subDevices=" + subDevices);
+        }
+
+        function deleteSubDevice() {
+        	var did = $('#deleteSubDeviceDid').val();
+        	var subDevices = $('#subDevicesForDeleting').val();
+        	if (subDevices) {
+        		gGizwitsWS.deleteSubDevice(did, JSON.parse(subDevices));
+        	}
+        	else {
+        		gGizwitsWS.deleteSubDevice(did, null);
+        	}
+        	showScreen("已对中控设备" + did + "发送删除子设备指令: subDevices=" + subDevices);
+        }
+
+        function bindSubDevice() {
+			var businessHost = $('#businessHost').val();
+        	var subDevice = $('#subDeviceForBinding').val();
+        	if (subDevice) {
+        		gGizwitsWS.bindSubDevice(businessHost, JSON.parse(subDevice));
+        	}
+        	else {
+        		gGizwitsWS.bindSubDevice(businessHost, null);
+        	}
+        	showScreen("已发送绑定子设备指令: businessHost=" + businessHost + ", subDevice=" + subDevice);
+        }
+
+        function clearLog()
+        {
+            $('#log').html("");
+        }
+
+        //=========================================================
+        // callback functions
+        //=========================================================
+        function onInit(devices)
+        {
+            if (devices.length) {
+            	for (var i = devices.length - 1; i >= 0; i--) {
+            		var device =  devices[i];
+                    showScreen("==================================================");
+                    showScreen("已绑定设备:product_key=" + device.product_key);
+                    showScreen("已绑定设备:did=" + device.did);
+                    showScreen("已绑定设备:mac=" + device.mac);
+                    showScreen("已绑定设备:is_online=" + device.is_online);
+                    showScreen("已绑定设备:type=" + device.type);
+                    showScreen("已绑定设备:dev_alias=" + device.dev_alias);
+                    showScreen("已绑定设备:remark=" + device.remark);
+
+                    addSelectOption('#connectDid', device.did, device.did);
+
+                    gBoundDevices[device.did] = device;
+            	}
+            }
+            else {
+            	showScreen("没有绑定的设备");
+            }
+        }
+
+        function onUpdateSubDevices(did, subDevices)
+        {
+        	console.info(subDevices);
+        	gSubDevices[did] = {}; //清空子设备列表缓存
+            if (subDevices.length) {
+            	for (var i = subDevices.length - 1; i >= 0; i--) {
+            		var subDevice =  subDevices[i];
+                    showScreen("==================================================");
+                    showScreen("更新子设备:所属中控did=" + did);
+                    showScreen("更新子设备:product_key=" + subDevice.product_key);
+                    showScreen("更新子设备:did=" + subDevice.did);
+                    showScreen("更新子设备:mac=" + subDevice.mac);
+                    showScreen("更新子设备:is_online=" + subDevice.is_online);
+
+                    addSelectOption('#subDid', subDevice.did, subDevice.did);
+
+                    gSubDevices[did][subDevice.did] = subDevice;
+            	}
+            }
+            else {
+                showScreen("中控 " + did + " 没有子设备");
+            }
+        }
+
+        function onConnected(did)
+        {
+            addSelectOption('#readDid', did, did);
+            addSelectOption('#writeDid', did, did);
+            var device = gBoundDevices[did];
+            if (device) {
+            	addSelectOption('#addSubDeviceDid', did, did);
+            	addSelectOption('#deleteSubDeviceDid', did, did);
+            	addSelectOption('#updateSubdevicesDid', did, did);
+            }
+
+            showScreen("与设备:" + did + "连接成功!");
+        }
+
+        function onOnlineStatusChanged(value)
+        {
+            showScreen("设备上下线通知，did=" + value.did);
+            showScreen("设备上下线通知，is_online=" + value.is_online);
+        }
+
+        function onReceivedRaw(value)
+        {
+            var str = "收到设备" + value.did + "的Raw: [";
+            for (var i = 0; i < value.raw.length; i++)
+            {
+                str = str + value.raw[i] + ",";
+            }
+            str = str.substr(0, str.length-1) + "]";
+            showScreen(str);
+        }
+
+        function onReceivedAttrs(value)
+        {
+            var str = "收到设备" + value.did + "的Attrs: ";
+            for (var key in value.attrs)
+            {
+                str = str + key + ":" + value.attrs[key] + ",";
+            }
+            str = str.substr(0, str.length-1);
+            showScreen(str);
+        }
+
+        function onError(value)
+        {
+            showError(value.toString());
+        }
+
+        //=========================================================
+        // inner functions
+        //=========================================================
+        function showScreen(txt)
+        {
+            $('#log').prepend('<p style="color: blue">' + txt + '</p>');
+        }
+
+        function showError(txt)
+        {
+            $('#log').prepend('<p style="color: red">' + txt + '</p>');
+        }
+
+        function addSelectOption(selectId, value, text)
+        {
+            if ($(selectId + ' option[value =' + value + ']').length == 0)
+            {
+                $(selectId).append("<option value=" + value + ">" + text + "</option>");
+            }
+        }
+    </script>
 </head>
 <body>
-    <h3>Gizwits-Javascript-SDK Example Releases</h3>
+    <h3>Gizwits-Javascript-SDK Example v0.4.0</h3>
     <p>（请使用Chrome、Firefox等支持Websocket功能的浏览器，低版本IE或Firefox存在不兼容的情况）</p>
-    <a href="https://taotown.github.io/gizwits-wechat-js-sdk/v0.3.0.html">v0.3.0</a>
-    <a href="https://taotown.github.io/gizwits-wechat-js-sdk/v0.2.0.html">v0.2.0</a>
+    <a href="https://gizwits.github.io/gizwits-wechat-js-sdk/">All Releases</a>
+    <hr/>
+    <table border="0" cellpadding="0", cellspacing="0">
+        <tr>
+            <td align="left" valign="top" style="border-right: #d0d0d0 1px solid; padding: 0 10px 0 0;">
+                <h4>1. 首先，请初始化GizwitsWS对象</h4>
+                <table border="0" cellpadding="0", cellspacing="2">
+                    <tr>
+                        <td align="left" valign="top">
+                            <label>APIHost:</label>
+                        </td>
+                        <td align="left" valign="top">
+                            <input type="text" id="apiHost" value="api.gizwits.com" size="30" placeholder="input like: api.gizwits.com" />
+                        </td>
+                        <td align="left" valign="top">
+                            <label style="font-size: small">机智云OpenAPI域名</label>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align="left" valign="top">
+                            <label>WeChatOpenID:</label>
+                        </td>
+                        <td align="left" valign="top">
+                            <input type="text" id="weChatOpenID" value="A037E0FC-AB7F-4D82-B6B1-DAB5575AA188" size="30" placeholder="wx001" />
+                        </td>
+                        <td align="left" valign="top">
+                            <label style="font-size: small">微信用户OpenID</label>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td align="left" valign="top">
+                            <label>GizwitsAppID:</label>
+                        </td>
+                        <td align="left" valign="top">
+                            <input type="text" id="gizwitsAppID" value="42a7563f305342ae805cbb21d968a0ce" size="30" placeholder="60d9d45a420b4f539434adb127fe5e5e" />
+                        </td>
+                        <td align="left" valign="top">
+                            <label style="font-size: small">机智云平台应用标识</label>
+                        </td>
+                    </tr>
+                </table>
+                <br/>
+                <button id="newObj" onclick="newObj()">Do it!</button>
+                <br/>
+                <p>（初始化对象的过程中，已经自动完成了callback函数的创建。）</p>
+                <h4>2. 然后，使用GizwitsWS.init()获取绑定列表</h4>
+                <button id="init" onclick="init()">Do it!</button>
+                <br/>
+                <p>（绑定列表会在onInit这个callback函数返回。）</p>
+                <h4>3. 接着，选择一个设备,创建websocket连接</h4>
+                <label style="display:inline-block;width: 90px">did:</label><select id="connectDid" about="" style="width: 300px;"></select>
+                <button id="connect" onclick="connect()">Do it!</button>
+                <br/>
+                <p>（websocket创建成功，会回调函数onConnected。）</p>
+                <h4>4. 选择已连接设备,读取状态</h4>
+                <label style="display:inline-block;width: 90px">did:</label><select id="readDid" about="" style="width: 300px;"></select><br/>
+                <label>attrNames:</label><br/>
+                <textarea rows="5" cols="90" id="attrNames" placeholder='对于定义了变长数据点的设备可以指定关心的数据点名称读取相应的数据点状态，例如["A01","A02", ...]，不填写内容则表示读取所有数据点；对于定义了定长数据点的设备只支持不指定数据点名称来读取所有数据点'></textarea>
+                <br/>
+                <button id="read" onclick="read()">Do it!</button>
+                <br/>
+                <p>（发送指令成功后，稍后会收到设备状态信息。）</p>
+                <h4>5. 选择已连接设备，控制一下</h4>
+                <label style="display:inline-block;width: 90px">did:</label><select id="writeDid" about="" style="width: 300px;"></select>
+                <br/>
+                <label>attrs:</label><br/>
+                <textarea rows="10" cols="90" id="attrs" placeholder='以数据点方式控制设备，请输入数据点键值对，例如{"power":true,"speed":0,...}，如果设备支持，可以与自定义方式同时使用'></textarea>
+                <br/>
+                <label>raw:</label><br/>
+                <textarea rows="10" cols="90" id="raw" placeholder='以自定义方式控制设备，请输入P0数组，例如[<byte>,<byte>,<byte>...]，如果设备支持，可以与数据点方式同时使用'></textarea>
+                <br/>
+                <button id="writeCommand" onclick="writeCommand()">Do it!</button>
+                <br/>
+                <p>（发送指令成功后，稍后会收到设备状态信息。）</p>
+                <h4>6. 选择已连接中控设备，更新一下子设备列表</h4>
+                <label style="display:inline-block;width: 90px">did:</label><select id="updateSubdevicesDid" about="" style="width: 300px;"></select>
+                <button id="updateSubDevices" onclick="updateSubDevices()">Do it!</button>
+                <br/>
+                <p>（子设备列表会在onUpdateSubDevices这个callback函数返回。）</p>
+                <h4>7. 选择已连接中控设备，添加一下子设备</h4>
+                <label style="display:inline-block;width: 90px">did:</label><select id="addSubDeviceDid" about="" style="width: 300px;"></select><br/>
+                <label>subDevices:</label><br/>
+                <textarea rows="5" cols="90" id="subDevicesForAdding" placeholder='填写子设备信息subDevices,例如[{"mac":"xxx"},{"mac":"yyy"},...],则指定待筛选的子设备信息,不填写则不筛选'></textarea>
+                <br/>
+                <button id="addSubDevice" onclick="addSubDevice()">Do it!</button>
+                <br/>
+                <p>（若添加上子设备，变化的子设备列表会在onUpdateSubDevices这个callback函数返回。）</p>
+                <h4>8. 选择已连接中控设备及其子设备，删除一下子设备</h4>
+                <label style="display:inline-block;width: 90px">did:</label><select id="deleteSubDeviceDid" about="" style="width: 300px;"></select><br/>
+                <label>subDevices:</label><br/>
+                <textarea rows="5" cols="90" id="subDevicesForDeleting" placeholder='填写子设备信息subDevices,例如[{"did":"xxx"},{"did":"yyy"},...],指定待删除的子设备'></textarea>
+                <br/>
+                <button id="deleteSubDevice" onclick="deleteSubDevice()">Do it!</button>
+                <br/>
+                <p>（若删除掉子设备，变化的子设备列表会在onUpdateSubDevices这个callback函数返回。）</p>
+                <h4>9. 选择一个已存在的中控设备子设备，绑定一下子设备</h4>
+                <table border="0" cellpadding="0", cellspacing="2">
+	                <tr>
+	                    <td align="left" valign="top">
+	                        <label>BusinessHost:</label>
+	                    </td>
+	                    <td align="left" valign="top">
+	                        <input type="text" id="businessHost" value="111.200.54.107" size="30" placeholder="input like: api.gizwits.com" />
+	                    </td>
+	                    <td align="left" valign="top">
+	                        <label style="font-size: small">业务服务器域名</label>
+	                    </td>
+	                </tr>
+                </table>
+                <br/>
+                <label>subDevice:</label><br/>
+                <textarea rows="5" cols="90" id="subDeviceForBinding" placeholder='填写待绑定的子设备信息subDevice,例如{"mac":"xxx","product_key":"yyy"}'></textarea>
+                <br/>
+                <button id="bindSubDevice" onclick="bindSubDevice()">Do it!</button>
+                <br/>
+                <p>（若子设备成功，变化的绑定设备列表会在onInit这个callback函数返回。）</p>
+            </td>
+            <td align="left" valign="top" style="padding: 0 0 0 10px;">
+                <button id="clear" onclick="clearLog();" >clear</button><br/>
+                <span id="log"></span>
+            </td>
+        </tr>
+    </table>
+
 </body>
 </html>
