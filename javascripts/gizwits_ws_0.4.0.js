@@ -4,41 +4,20 @@
  * @author Trevor(trevortao@gizwits.com)
  */
 
-/**
- * 设备识别码长度
- * 
- * @type {Number}
- */
-var LEN_DID = 22;
+var LEN_DID = 22; //设备识别码长度
+var LEN_PRODUCT_KEY = 32; //产品标识码长度
+var P0_TYPE_CUSTOM = "custom"; //自定义P0
+var P0_TYPE_ATTRS_V4 = "attrs_v4"; //数据点协议P0
+var PROTOCOL_VER = [0x00, 0x00, 0x00, 0x03]; //P0协议版本号
+var RETRY_WAIT_TIME = 5000; //用户重登/Websocket重连间隔(毫秒)
+var RETRY_SEND_TIME = 2000; //重连Websocket后重新下发指令的时间间隔(毫秒)
 
-/**
- * 产品标识码长度
- * 
- * @type {Number}
- */
-var LEN_PRODUCT_KEY = 32;
-
-/**
- * 自定义P0
- * 
- * @type {String}
- */
-var P0_TYPE_CUSTOM = "custom";
-
-/**
- * 数据点协议P0
- * 
- * @type {String}
- */
-var P0_TYPE_ATTRS_V4 = "attrs_v4";
-
-/**
- * P0协议版本号
- *
- * @const
- * @type {Array}
- */
-var PROTOCOL_VER = [0x00, 0x00, 0x00, 0x03];
+var CMD_TRANS_BUSINESS_RESP = 0x93;
+var P0_CMD_REPORT_SUBDEVICE_STATUS = 0x10; //子设备上下线状态变更通知(中控)
+var P0_CMD_ADD_SUBDEVICE_RESP = 0x57; //添加子设备应答(中控)
+var P0_CMD_DELETE_SUBDEVICE_RESP = 0x59; //删除子设备(中控)
+var P0_CMD_GET_SUBDEVICE_LIST_RESP = 0x5B; //获取子设备列表应答(中控)
+var P0_CMD_REPORT_SUBDEVICE_LIST = 0x5C; //子设备列表变更通知(中控)
 
 /**
  * Gizwits WeChat JavaScript SDK对象构造函数
@@ -69,7 +48,7 @@ function GizwitsWS(apiHost, wechatOpenID, gizwitsAppID) {
     this._appID = gizwitsAppID;
     this._userToken = undefined;
     this._openID = wechatOpenID;
-    this._heartbeatInterval = 60;
+    this._heartbeatInterval = 55;
 }
 
 /**
@@ -87,6 +66,7 @@ function Connection(wsInfo, dataType, callback) {
     this._websocket = undefined;
     this._callbackObj = callback;
     this._heartbeatTimerID = undefined;
+    this._lastConnectMilliTimestamp = 0;
     this._wsUrl = "{0}/ws/app/v1".format(wsInfo);
 }
 
@@ -146,16 +126,9 @@ GizwitsWS.prototype.read = function(did, attrNames) {
         return;
     }
 
-    //找到设备传输数据点数据的Websocket连接
-    var conn = this._connections[this._getAttrsV4ConntionsKey(device)];
-    if (!conn) {
-        this._sendError("Websocket of attrs_v4 is not connected.");
-        return;
-    }
-
     //往Websocket连接发送数据点数据读请求
     if (attrNames) {
-        conn._sendJson({
+        this._sendJson(device, P0_TYPE_ATTRS_V4, {
             cmd: "c2s_read",
             data: {
                 did: did,
@@ -163,7 +136,7 @@ GizwitsWS.prototype.read = function(did, attrNames) {
             }
         });
     } else {
-        conn._sendJson({
+        this._sendJson(device, P0_TYPE_ATTRS_V4, {
             cmd: "c2s_read",
             data: {
                 did: did
@@ -195,15 +168,8 @@ GizwitsWS.prototype.write = function(did, attrs, raw) {
     }
 
     if (attrs) {
-        //找到设备传输数据点数据的Websocket连接
-        var conn = this._connections[this._getAttrsV4ConntionsKey(device)];
-        if (!conn) {
-            this._sendError("Websocket of attrs_v4 is not connected.");
-            return;
-        }
-
         //往Websocket连接发送数据点数据
-        conn._sendJson({
+        this._sendJson(device, P0_TYPE_ATTRS_V4, {
             cmd: "c2s_write",
             data: {
                 did: did,
@@ -213,15 +179,8 @@ GizwitsWS.prototype.write = function(did, attrs, raw) {
     }
 
     if (raw) {
-        //找到设备传输自定义数据的Websocket连接
-        var conn = this._connections[this._getCustomConntionsKey(device)];
-        if (null == conn) {
-            this._sendError("Websocket of custom is not connected.");
-            return;
-        }
-
         //往Websocket连接发送自定义数据
-        conn._sendJson({
+        this._sendJson(device, P0_TYPE_CUSTOM, {
             cmd: "c2s_raw",
             data: {
                 did: did,
@@ -252,15 +211,8 @@ GizwitsWS.prototype.send = function(did, data) {
         return;
     }
 
-    //找到设备传输自定义数据的Websocket连接
-    var conn = this._connections[this._getCustomConntionsKey(device)];
-    if (!conn) {
-        this._sendError("Websocket of custom is not connected.");
-        return;
-    }
-
     //往Websocket连接发送自定义数据
-    conn._sendJson({
+    this._sendJson(device, P0_TYPE_CUSTOM, {
         cmd: "c2s_raw",
         data: {
             did: did,
@@ -289,13 +241,6 @@ GizwitsWS.prototype.updateSubDevices = function(did) {
         return;
     }
 
-    //找到设备传输自定义数据的Websocket连接
-    var conn = this._connections[this._getCustomConntionsKey(device)];
-    if (!conn) {
-        this._sendError("Websocket of custom is not connected.");
-        return;
-    }
-
     //由于长度字段依赖后续字段长度,故先组装长度字段后续字段
     var index = 0;
     var remainData = new Uint8Array(8);
@@ -311,7 +256,7 @@ GizwitsWS.prototype.updateSubDevices = function(did) {
     var data = PROTOCOL_VER.concat(this._getMQTTLenArray(index)).concat(Array.from(remainData.slice(0, index)));
 
     //往Websocket连接发送自定义数据
-    conn._sendJson({
+    this._sendJson(device, P0_TYPE_CUSTOM, {
         cmd: "c2s_raw",
         data: {
             did: did,
@@ -338,13 +283,6 @@ GizwitsWS.prototype.addSubDevice = function(did, subDevices) {
     var device = this._boundDevices[did];
     if (!device) {
         this._sendError("Device is not bound.");
-        return;
-    }
-
-    //找到设备传输自定义数据的Websocket连接
-    var conn = this._connections[this._getCustomConntionsKey(device)];
-    if (!conn) {
-        this._sendError("Websocket of custom is not connected.");
         return;
     }
 
@@ -377,7 +315,7 @@ GizwitsWS.prototype.addSubDevice = function(did, subDevices) {
     var data = PROTOCOL_VER.concat(this._getMQTTLenArray(index)).concat(Array.from(remainData.slice(0, index)));
 
     //往Websocket连接发送自定义数据
-    conn._sendJson({
+    this._sendJson(device, P0_TYPE_CUSTOM, {
         cmd: "c2s_raw",
         data: {
             did: did,
@@ -419,13 +357,6 @@ GizwitsWS.prototype.deleteSubDevice = function(did, subDevices) {
         return;
     }
 
-    //找到设备传输自定义数据的Websocket连接
-    var conn = this._connections[this._getCustomConntionsKey(device)];
-    if (!conn) {
-        this._sendError("Websocket is not connected.");
-        return;
-    }
-
     //挨个删除子设备
     for (var i = 0; i < subDevices.length; i++) {
         var subDeviceCache = subDevicesCache[subDevices[i].did];
@@ -448,7 +379,7 @@ GizwitsWS.prototype.deleteSubDevice = function(did, subDevices) {
             var data = PROTOCOL_VER.concat(this._getMQTTLenArray(index)).concat(Array.from(remainData.slice(0, index)));
 
             //往Websocket连接发送自定义数据
-            conn._sendJson({
+            this._sendJson(device, P0_TYPE_CUSTOM, {
                 cmd: "c2s_raw",
                 data: {
                     did: did,
@@ -603,6 +534,7 @@ GizwitsWS.prototype._getBoundDevices = function(limit, skip) {
 Connection.prototype._connectWS = function() {
     var conn = this;
 
+    conn._stopPing();
     var websocket = new WebSocket(conn._wsUrl);
     websocket.onopen = function(evt) { conn._onWSOpen(evt) };
     websocket.onclose = function(evt) { conn._onWSClose(evt) };
@@ -622,12 +554,16 @@ Connection.prototype._onWSClose = function(evt) {
 };
 
 Connection.prototype._onWSMessage = function(evt) {
+    var d = new Date();
+    var n = d.toLocaleTimeString();
+    console.log(n + " <-------------------------");
+    console.info(evt);
     var res = JSON.parse(evt.data);
     switch (res.cmd) {
         case "pong":
             break;
         case "login_res":
-            if (res.data.success == true) {
+            if (res.data.success === true) {
                 this._loginFailedCount = 0;
                 this._startPing();
                 this._subscribeDevices();
@@ -676,7 +612,7 @@ Connection.prototype._onWSMessage = function(evt) {
                     }
                 }
 
-                if (0x94 == res.data.raw[7 + addIndex]) {
+                if (CMD_TRANS_BUSINESS_RESP === res.data.raw[7 + addIndex]) {
                     action = res.data.raw[12 + addIndex];
                     actionP0 = res.data.raw.slice(13 + addIndex);
                 } else {
@@ -684,21 +620,21 @@ Connection.prototype._onWSMessage = function(evt) {
                     actionP0 = res.data.raw.slice(9 + addIndex);
                 }
 
-                if (0x10 === action) {
+                if (P0_CMD_REPORT_SUBDEVICE_STATUS === action) {
                     this._callbackObj._processSubdeviceOnlineReport(did, actionP0);
                     this._callbackObj._notifySubdevices(did);
-                } else if (0x5B === action || 0x5C === action) {
+                } else if (P0_CMD_GET_SUBDEVICE_LIST_RESP === action || P0_CMD_REPORT_SUBDEVICE_LIST === action) {
                     if (this._callbackObj.onUpdateSubDevices && P0_TYPE_CUSTOM === this._dataType) {
                         this._callbackObj._processSubdevicesReport(did, actionP0);
                         this._callbackObj._notifySubdevices(did);
                     }
-                } else if (0x57 === action) {
+                } else if (P0_CMD_ADD_SUBDEVICE_RESP === action) {
                     if (actionP0[0]) {
                         console.log("center control device " + did + " add subDevice failed");
                     } else {
                         console.log("center control device " + did + " add subDevice success");
                     }
-                } else if (0x59 == action) {
+                } else if (P0_CMD_DELETE_SUBDEVICE_RESP === action) {
                     if (actionP0[0]) {
                         console.log("center control device " + did + " delete subDevice failed");
                     } else {
@@ -753,8 +689,10 @@ Connection.prototype._sendJson = function(json) {
     var websocket = this._websocket;
     if (websocket.OPEN === websocket.readyState) {
         websocket.send(data);
+        return true;
     } else {
-        console.log("Send data error, websocket is not connected.");
+        console.log("[" + Date() + "]Send data error, websocket is not connected.");
+        return false;
     }
 };
 
@@ -784,7 +722,7 @@ Connection.prototype._tryLoginAgain = function() {
         conn._websocket.close();
         return;
     }
-    var waitTime = conn._loginFailedCount * 5000;
+    var waitTime = conn._loginFailedCount * RETRY_WAIT_TIME;
     window.setTimeout(function() { conn._login() }, waitTime);
 };
 
@@ -805,7 +743,7 @@ Connection.prototype._addSubscribeDid = function(did) {
 Connection.prototype._removeSubscribeDid = function(did) {
     var subDids = this._subscribedDids;
     for (var i = 0; i < subDids.length; i++) {
-        if (subDids[i] == did) {
+        if (subDids[i] === did) {
             subDids.splice(i, 1);
             break;
         }
@@ -823,6 +761,26 @@ Connection.prototype._subscribeDevices = function() {
     };
     this._sendJson(json);
 };
+
+GizwitsWS.prototype._sendJson = function(device, dataType, json) {
+    //找到设备传输自定义数据的Websocket连接
+    var conn = this._connections[this._getConntionsKey(device, dataType)];
+    if (!conn) {
+        this._sendError("Websocket of " + dataType + " is not connected.");
+        return;
+    }
+
+    if (!conn._sendJson(json)) {
+        if (Date.now() - conn._lastConnectMilliTimestamp > RETRY_WAIT_TIME) {
+            console.log("[" + Date() + "]Send data error, try to connect again.");
+            //每个设备创建两个Websocket分别用于传输数据点数据跟自定义数据
+            this._connect(device, P0_TYPE_ATTRS_V4);
+            this._connect(device, P0_TYPE_CUSTOM);
+            conn._lastConnectMilliTimestamp = Date.now();
+            window.setTimeout(function() { conn._login() }, RETRY_SEND_TIME);
+        }
+    }
+}
 
 GizwitsWS.prototype._connect = function(device, dataType) {
     var key = this._getConntionsKey(device, dataType);
@@ -857,14 +815,6 @@ GizwitsWS.prototype._getWebsocketConnInfo = function(device) {
     }
 
     return pre + host + ":" + port;
-};
-
-GizwitsWS.prototype._getCustomConntionsKey = function(device) {
-    return this._getConntionsKey(device, P0_TYPE_CUSTOM);
-};
-
-GizwitsWS.prototype._getAttrsV4ConntionsKey = function(device) {
-    return this._getConntionsKey(device, P0_TYPE_ATTRS_V4);
 };
 
 GizwitsWS.prototype._getConntionsKey = function(device, dataType) {
